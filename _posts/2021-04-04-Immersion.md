@@ -9,6 +9,7 @@ Will you be able to do the dive and take out both flags on this machine?
 Please share your feedback: "https://twitter.com/C0ldd__”
 {% endhighlight %}
 
+The VM can be found [here](https://www.vulnhub.com/entry/colddworld-immersion,668/)
 
 nmap 
 {% highlight terminal %}

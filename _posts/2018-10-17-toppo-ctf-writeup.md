@@ -2,7 +2,6 @@
 title: "CTF Write Up : Toppo 1"
 description: "Toppo 1 CTF Writeup"
 layout: post
-categories: CTF
 ---
 I've been getting back into hackerering _Capture The Flag_ virtual machines from [VulnHub](https://www.vulnhub.com) recently.
 To get back into the swing of things I chose [Toppo:1](https://www.vulnhub.com/entry/toppo-1,245/).

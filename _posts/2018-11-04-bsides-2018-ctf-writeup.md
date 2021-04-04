@@ -2,7 +2,6 @@
 title: "CTF Write Up : BSides Vancouver 2018 Workshop"
 description: "BSides Vancouver 2018 CTF Challenge from vulnhub.com"
 layout: post
-categories: CTF
 ---
 Back again with another CTF write up. This boot2root VM was meant for a workshop style 
 introduction to penetration testing techniques, methodologies, common pitfalls and 

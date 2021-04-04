@@ -27,10 +27,10 @@ url: "" # the base hostname & protocol for your site, e.g. http://example.com
 github_username: whotty 
 
 # Build settings
-#theme: minima
+theme: minima
 #theme: jekyll-shell-theme
 #remote_theme: "tareqdandachi/jekyll-shell-theme"
-remote_theme: b2a3e8/jekyll-theme-console
+#remote_theme: b2a3e8/jekyll-theme-console
 plugins:
   - jekyll-feed
 

@@ -5,7 +5,7 @@ The vulnhub virtual machine can be found [here](https://www.vulnhub.com/entry/on
 
 nmap
 {% highlight terminal %}
-┌──(kali㉿kali)-[~/ctfs/credit-card-scammers]
+┌──(kali㉿kali)-[~]
 └─$ nmap -p- -sV 192.168.56.110
 Starting Nmap 7.91 ( https://nmap.org ) at 2021-03-25 05:27 EDT
 Nmap scan report for 192.168.56.110

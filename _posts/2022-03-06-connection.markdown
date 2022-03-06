@@ -147,6 +147,6 @@ proof.txt
 # cat proof.txt
 cat proof.txt
 a7c6ea4931ab86fb54c5400204474a39
-{% highlight terminal %}
+{% endhighlight %}
 
 I submitted both flags to HackMyVM and got the points. Hooray for points. 

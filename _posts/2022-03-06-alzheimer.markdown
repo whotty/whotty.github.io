@@ -1,3 +1,6 @@
+---
+title: "Alzheimer - HackMyVM Walkthrough" 
+---
 nmap service scan:
 {% highlight terminal %}
 ┌──(kali㉿kali)-[~/ctf/alzheimer]

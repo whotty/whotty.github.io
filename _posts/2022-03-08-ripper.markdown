@@ -1,5 +1,5 @@
 ---
-title: "Ripper - HackMyVM"
+title: "Ripper - HackMyVM Walkthrough" 
 ---
 
 nmap service scan:

